@@ -1,0 +1,302 @@
+---
+title: "Split-plot with quantitative whole-plot"
+author: "Tyler Wiederich"
+format: html
+execute: 
+  echo: true
+  warning: false
+  message: false
+---
+
+# Introduction
+
+This example aims to investigate the effects of varying salt concentrations and pH levels on the growth of three distinct bacterial species. Specifically, the research problem centers on creating a response surface to predict how quantitative whole-plot factors—salt concentration and pH—interact with a qualitative subplot factor—bacteria type—to influence bacterial proliferation, as measured by the logarithm of colony-forming units (log CFU).
+
+The experimental design employs a split-plot structure, wherein three levels of salt concentration (4%, 5%, and 6%) and three levels of pH (3, 4.5, and 6) are fully crossed, resulting in nine unique whole-plot treatment combinations. Each whole-plot unit is prepared independently and subdivided into three subplots, with each subplot inoculated with one of three bacterial species (A, B, or C). This arrangement is replicated across three independent experimental runs, yielding a total of 27 whole plots (3 salt levels × 3 pH levels × 3 replicates) and 81 subplots (3 bacteria per whole plot). The primary outcome variable, log CFU, is recorded for each subplot, providing a dataset to assess both main effects and interactions among the experimental factors.
+
+# Statistical Challenge
+
+A key statistical challenge in this experiment arises from the structure of the whole-plot factor, which is defined by the unique combinations of two quantitative variables: salt concentration and pH.
+
+The method presented here is inspired by Section 5.6 from SAS for Mixed Models[^1].
+
+[^1]: Littell, R. C., Milliken, G. A., Stroup, W. W., Wolfinger, R. D., & Schabenberger, O. (2006). SAS for mixed models. https://ci.nii.ac.jp/ncid/BA77108739
+
+# Exploratory Data Analysis
+
+A preliminary analysis, as visualized in @fig-intplot, suggests there appear to be quadratic effects in pH level, and the type of bacteria appears to be significant too. There might also be interaction between pH and salt.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-dpi: 600
+#| label: fig-intplot
+
+library(tidyverse)
+exp_data <- read.csv("data/quant_by_quant_wp_qual_sp.csv")
+
+# Summarize means for interaction plot
+summary_data <- exp_data %>%
+  group_by(Salt, Bacteria, pH) %>%
+  summarize(mean_logCFU = mean(logCFU), .groups = "drop")
+
+ggplot(summary_data, aes(x = pH, y = mean_logCFU, group = Bacteria, color = Bacteria)) +
+  geom_point(size = 2) +
+  geom_line(linewidth = 1) +
+  facet_grid(.~Salt, labeller = label_both) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02", "#7570b3")) +
+  labs(
+    title = "Interaction Plot: pH x Bacteria by Salt",
+    x = "pH Level",
+    y = "Mean log(CFU)",
+    color = "Bacteria"
+  ) + 
+  theme_bw() + 
+  theme(aspect.ratio = 1)
+```
+
+The 3D figure below shows the same averages using an interactive display. This reinforces the idea that there is some potentially complicated structure occuring in the experimental data.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-dpi: 600
+#| fig-width: 7
+#| fig-height: 6
+
+library(plotly)
+
+# Prepare data for 3D scatterplot
+plot_data <- summary_data
+
+fig <- plot_ly(
+  plot_data,
+  x = ~Salt,
+  y = ~pH,
+  z = ~mean_logCFU,
+  color = ~Bacteria,
+  colors = c("#1b9e77", "#d95f02", "#7570b3"),
+  symbol = ~Bacteria,
+  symbols = c("circle", "square", "diamond"),
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 6, line = list(width = 1, color = 'black'))
+) %>%
+  layout(
+    scene = list(
+      xaxis = list(title = "Salt (%)", tickvals = unique(plot_data$Salt)),
+      yaxis = list(title = "pH Level", tickvals = unique(plot_data$pH)),
+      zaxis = list(title = "Mean log(CFU)")
+    ),
+    legend = list(title = list(text = "<b>Bacteria</b>")),
+    title = "3D Scatterplot: Salt, pH, and Mean log(CFU) by Bacteria"
+  )
+
+fig
+```
+
+# Model
+
+If the objective of the researchers is to look at the effects for the levels provided in the experiment, then the standard split-plot approach would be sufficient.
+
+$$
+y_{ijkl}=\mu_{ijk}+\omega_{ijkl} + \epsilon_{ijkl}
+$$
+
+Here, $\mu_{ijk}$ is the true mean for salt concentration $i$, pH $j$, and bacteria $k$. $\omega_{ijl}$ is the whole-plot error and is independently and identically distributed with a Gaussian distribution that has mean of 0 and variance of $\sigma^2_\omega$. $\epsilon_{ijkl}$ defines the split-plot error, which is independent with $\omega_{ijl}$ and is assumed to be independently and identically distributed with a Gaussian distribution that has mean of 0 and variance of $\sigma^2_\epsilon$.
+
+In this example, our focus is on creating a response surface of pH and salt concentrations. Using the same indices as defined above, the full response surface model is:
+
+$$
+\begin{align*}
+y_{ijkl} =\ & \beta_0 
++ \beta_1 X_i 
++ \beta_2 X_i^2 
++ \beta_3 X_j 
++ \beta_4 X_j^2 
++ \beta_5 X_i X_j \\
+& + \beta_6 X_i^2 X_j 
++ \beta_7 X_i X_j^2 
++ \beta_8 X_i^2 X_j^2 \\
+& + \beta_9 X_k 
++ \beta_{10} X_i X_k 
++ \beta_{11} X_i^2 X_k \\
+& + \beta_{12} X_j X_k 
++ \beta_{13} X_j^2 X_k 
++ \beta_{14} X_i X_j X_k \\
+& + \beta_{15} X_i^2 X_j X_k 
++ \beta_{16} X_i X_j^2 X_k 
++ \beta_{17} X_i^2 X_j^2 X_k \\
+& + \omega_{ijl} + \epsilon_{ijkl}
+\end{align*}
+$$
+
+The resulting ANOVA table is presented below.
+
+| Source of Variation                          | Degrees of Freedom |
+|----------------------------------------------|--------------------|
+| Salt (lin, quad)                             | 2                  |
+| pH (lin, quad)                               | 2                  |
+| Salt (lin, quad) × pH (lin, quad)            | 4                  |
+| Whole-plot error                             | 18                 |
+| Bacteria                                     | 2                  |
+| Salt (lin, quad) × Bacteria                  | 4                  |
+| pH (lin, quad) × Bacteria                    | 4                  |
+| Salt (lin, quad) × pH (lin, quad) × Bacteria | 8                  |
+| Subplot (residual) error                     | 36                 |
+| **Total**                                    | **80**             |
+
+# Software Implementation
+
+The first step of the analysis is to read in the data. We also need to define new class variables for salt concentration and pH so that we may use these terms to define the whole-plot unit separately from the linear/quadratic effects.
+
+::: panel-tabset
+## R
+
+```{r}
+exp_data <- read.csv("data/quant_by_quant_wp_qual_sp.csv")
+exp_data$cSalt <- factor(exp_data$Salt)
+exp_data$cpH <- factor(exp_data$pH)
+exp_data$rep <- factor(exp_data$rep)
+head(exp_data)
+```
+
+## SAS
+
+```{r}
+#| echo: false
+library(SASmarkdown)
+```
+
+```{sashtml5, collectcode=TRUE}
+PROC IMPORT datafile="C:/Users/cwied/OneDrive - University of Nebraska-Lincoln/4 - Obsidian Vault/Consulting/Portfolio/quantxquant wp qual sp/data/quant_by_quant_wp_qual_sp.csv"
+    out=exp_data
+    dbms=csv
+    replace;
+    getnames=yes;
+run;
+
+data exp_data;
+  set exp_data;
+  cSalt = Salt;
+  cpH = pH;
+run;
+
+```
+:::
+
+```{sas}
+ods html5 style=htmlblue;
+proc print data=exp_data(obs=6);
+run;
+```
+
+Before fitting the full model, we need to take note of a couple of things. First, we need to ensure that Type I Sums of Squares (SS) are used when computing the ANOVA table. Type I SS are fitted sequentially, which means that main effects are fitted before interactions (or quadratic terms). Secondly, Satterthwaite (or Kenward-Rogers) degrees of freedom should be used. Once both settings are specified, the full model can be fit.
+
+::: panel-tabset
+## R
+
+```{r}
+#| message: false
+#| warning: false
+library(lme4)
+library(lmerTest)
+model.full <- lmer(logCFU ~ (pH+I(pH^2))*(Salt+I(Salt^2))*Bacteria + (1|rep:cSalt:cpH),
+                   data = exp_data)
+anova(model.full, type = 1)
+```
+
+::: callout-note
+There are few important things to note with the R output.
+
+-   The message `fixed-effect model matrix is rank deficient` means that some columns of the design matrix directly correspond with other columns in the design matrix. This occurred since we have the quantitative levels of salt and pH with their qualitative levels, so the message can be ignored.
+
+-   The ANOVA table may include more rows if the model is defined with linear x quadratic interactions. The extra rows can be safely ignored.
+
+-   The `I()` function is required to make calculations to a term in the formula.
+:::
+
+## SAS
+
+```{sashtml5}
+ods html5 style=htmlblue;
+ods select Tests1;
+PROC GLIMMIX data=exp_data;
+	CLASS cSalt cpH Bacteria rep;
+	MODEL logCFU = pH|pH|Salt|Salt|Bacteria / s htype=1 ddfm=satterthwaite;
+	RANDOM rep*cSalt*cpH;
+RUN;
+```
+:::
+
+Within rounding, R and SAS provide the exact same ANOVA tables from the model. To get our final model, we look for the highest order terms that have p-values that would be considered significant. The following terms meet this criteria when using the typical 0.05 p-value cutoff.
+
+-   pH (0.023743)
+
+-   Bacteria (0.004082)
+
+-   pH\^2 x Salt (0.025976)
+
+Removing all higher order terms, we get the final response surface model.
+
+$$
+\begin{align*}
+y_{ijkl} =\ & \beta_0
++ \beta_1 X_i 
++ \beta_2 X_j 
++ \beta_3 X_j^2 
++ \beta_4 X_i X_j^2 
++ \beta_5 X_k 
++ \omega_{ijl} + \epsilon_{ijkl}
+\end{align*}
+$$
+
+::: panel-tabset
+## R
+
+```{r}
+model.final <- lmer(logCFU ~ Salt + pH + I(pH^2) + Salt:pH + Salt:I(pH^2) + Bacteria + (1|rep:cSalt:cpH),
+                   data = exp_data)
+summary(model.final)
+```
+
+## SAS
+
+In SAS, we need to separately create the pH\^2 term before fitting the final model.
+
+```{sas}
+
+ods html5 style=htmlblue;
+data exp_data;
+  set exp_data;
+  pH2 = pH**2;
+run;
+
+ods select CovParms ParameterEstimates;
+PROC GLIMMIX data=exp_data;
+	CLASS cSalt cpH Bacteria rep;
+	MODEL logCFU = Salt pH pH2 Salt*pH Salt*pH2 Bacteria / s htype=1 ddfm=satterthwaite;
+	RANDOM rep*cSalt*cpH;
+RUN;
+
+```
+:::
+
+::: callout-note
+Parameter estimates for SAS and R may be different due to the construction of the design matrix. By default, R uses a "sum-to-zero" restriction, whereas SAS sets the last level of qualitative factors to zero.
+
+To get the results from R to match the results from SAS, the following modification is needed.
+
+```{r}
+#| eval: false
+model.final <- lmer(logCFU ~ Salt + pH + I(pH^2) + Salt:pH + Salt:I(pH^2) + Bacteria + (1|rep:cSalt:cpH),
+                   data = exp_data,
+                   contrasts = list(Bacteria = contr.SAS))
+```
+:::
+
+# Conclusion
+
+In this example, we demonstrated the fitting of a response surface model to split-plot design where the whole-plot consisted of two quantitative factors. The key challenge was to create new qualitative factors for the quantitative factors in order to define the whole-plot unit. Once these factors are created, standard model fitting and response surface techniques can be used.
